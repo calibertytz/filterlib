@@ -1,51 +1,28 @@
 import numpy as np
 from scipy.stats import norm
 
-class CreateDataset(object):
-    def __init__(self):
-        self.real_data = []
-        self.measurement_data = []
-
-    def linear_data_generate(self, x, N, F, H, Q, R):
-        for _ in range(N):
-            x = np.random.multivariate_normal(np.dot(F, x), Q)
-            z = np.random.multivariate_normal(np.dot(H, x), R)
-            self.real_data.append(x)
-            self.measurement_data.append(z)
-
-    def nonlinear_data_generate(self, x, N, f, h, Q, R):
-        for _ in range(N):
-            x = np.random.multivariate_normal(f(x), Q)
-            z = np.random.multivariate_normal(h(x), R)
-            self.real_data.append(x)
-            self.measurement_data.append(z)
-
-
-
 class KalmanFilter(object):
-    '''
-    x: (n, )
-    z: (m, )
-    '''
-    def __init__(self, F = None, H = None, Q = None, R = None, P = None, x0 = None):
+    def __init__(self, n = None, m = None, F = None, H = None, Q = None, R = None,
+                 P = None, x0 = None):
 
-        if(F is None or H is None):
+        if (m  == None or n == None):
+            raise ("Please input system dimension n and measurement dimension m!")
+        elif (F == None or H == None):
             raise ValueError("Set proper system dynamics.")
 
-        self.n = F.shape[1]
-        self.m = H.shape[0]
-
+        self.n = n
+        self.m = m
         self.F = F
         self.H = H
+
         self.Q = np.eye(self.n) if Q is None else Q
         self.R = np.eye(self.m) if R is None else R
         self.P = np.eye(self.n) if P is None else P
-        self.x = np.zeros((self.n, 1)) if x0 is None else x0
+        self.x = np.random.normal(size = self.n) if x0 is None else x0
 
     def predict(self):
         self.x = np.dot(self.F, self.x)
         self.P = np.dot(np.dot(self.F, self.P), self.F.T) + self.Q
-
 
     def update(self, z):
         y = z - np.dot(self.H, self.x)
@@ -67,38 +44,43 @@ class KalmanFilter(object):
 
 
 class ExtendKalmanFilter(object):
-    def __init__(self, f = None, h = None, fg = None, hg = None,
-                 Q = None, R = None, P = None, x0 = None):
+    def __init__(self, n = None, m = None, f = None, h = None, fg = None, hg = None,
+                 Q = None, R = None, P = None, x0 = None, F = None, H = None):
 
-        if(f is None or h is None):
+        if (m  == None or n == None):
+            raise ("Please input system dimension n and measurement dimension m!")
+        elif (f == None or h == None):
             raise ValueError("Set proper system dynamics.")
 
-        self.n = Q.shape[1]
-        self.m = R.shape[1]
-
+        self.n = n
+        self.m = m
         self.f = f
         self.h = h
         self.fg = fg
         self.hg = hg
+        self.F  = F
+        self.H = H
+
         self.Q = np.eye(self.n) if Q is None else Q
-        self.R = np.eye(self.n) if R is None else R
+        self.R = np.eye(self.m) if R is None else R
         self.P = np.eye(self.n) if P is None else P
-        self.x = np.zeros((self.n, 1)) if x0 is None else x0
+        self.x = np.random.normal(size=self.n) if x0 is None else x0
 
     def predict(self):
-        F = self.fg(self.x)
+        F = self.F if self.fg is None else self.fg(self.x)
         self.x = self.f(self.x)
         self.P = np.dot(np.dot(F, self.P), F.T) + self.Q
         return self.x
 
     def update(self, z):
-        H = self.hg(self.x)
+        H = self.H if self.hg is None else self.hg(self.x)
         y = z - np.dot(H, self.x)
         S = self.R + np.dot(H, np.dot(self.P, H.T))
-        K = np.dot(np.dot(self.P, H.T), np.linalg.inv(S))
+        K = np.dot(np.dot(self.P, H.T), np.linalg.pinv(S))
         self.x = self.x + np.dot(K, y)
         I = np.eye(self.n)
         self.P = np.dot(I - np.dot(K, H), self.P)
+        return self.x
 
     def run_ekf(self, measurement_data):
         estimate_data = []
@@ -109,23 +91,73 @@ class ExtendKalmanFilter(object):
 
 
 class IteratedKalmanFilter(object):
+    def __init__(self, n = None, m = None, f = None, h = None, fg = None, hg = None,
+                 Q = None, R = None, P = None, x0 = None, itr = None):
+
+        if (m  == None or n == None):
+            raise ("Please input system dimension n and measurement dimension m!")
+        elif (f == None or h == None or fg ==None or hg ==None):
+            raise ValueError("Set proper system dynamics.")
+
+        self.n = m
+        self.m = n
+        self.f = f
+        self.h = h
+        self.fg = fg
+        self.hg = hg
+
+        self.Q = np.eye(self.n) if Q is None else Q
+        self.R = np.eye(self.m) if R is None else R
+        self.P = np.eye(self.n) if P is None else P
+        self.x = np.random.normal(size = self.n) if x0 is None else x0
+        self.itr = 5 if itr is None else itr
+
+    def predict(self):
+        F = self.fg(self.x)
+        self.x = self.f(self.x)
+        self.P = np.dot(np.dot(F, self.P), F.T) + self.Q
+
+    def update(self, z):
+        x_hat = self.x
+        for _ in range(self.itr):
+            H = self.hg(self.x)
+            S = self.R + np.dot(H, np.dot(self.P, H.T))
+            K = np.dot(np.dot(self.P, H.T), np.linalg.pinv(S))
+            W = np.dot(K,(z - self.h(self.x) - np.dot(H, x_hat - self.x)))
+            self.x = x_hat + W
+            I = np.eye(self.n)
+            self.P = np.dot(I - np.dot(K, H), self.P)
+
+        return self.x
+
+    def run_iekf(self, measurement_data):
+        estimate_data = []
+        for z in measurement_data:
+            self.predict()
+            estimate_data.append(self.update(z))
+        return np.array(estimate_data)
+
+
+class UnscentedKalmanFilter(object):
     pass
 
 class SIR(object):
-    def __init__(self, f = None, h = None, Q = None, R = None, particle_num = None,
+    def __init__(self, n = None, m = None, f = None, h = None, Q = None, R = None, particle_num = None,
                  x_P = None, V = None):
 
-        if(f is None or h is None):
+        if (m  == None or n == None):
+            raise ("Please input system dimension n and measurement dimension m!")
+        elif (f is None or h is None):
             raise ValueError("Set proper system dynamics.")
 
-        self.n = Q.shape[1]
-        self.m = R.shape[1]
-        self.particle_num = particle_num
-        self.V = 1 if V is None else V
-        self.x_P = np.random.normal(0, V, particle_num) if x_P is None else x_P
-
+        self.n = n
+        self.m = m
         self.f = f
         self.h = h
+
+        self.particle_num = 100 if particle_num is None else particle_num
+        self.V = 1 if V is None else V
+        self.x_P = np.random.normal(0, V, particle_num) if x_P is None else x_P
         self.Q = np.eye(self.n) if Q is None else Q
         self.R = np.eye(self.m) if R is None else R
 
@@ -141,7 +173,7 @@ class SIR(object):
         cumulative_sum[-1] = 1.
         rn = np.random.rand(N)
         indexes = np.searchsorted(cumulative_sum, rn)
-        # 根据索引采样
+        # sampling by index
         particles[:] = particles[indexes]
         weights.fill(1.0 / N)
         return particles, weights
@@ -155,10 +187,10 @@ class SIR(object):
             # compute particle weight
             P_w = norm.pdf(z - z_update, self.R)
             P_w /= np.sum(P_w)
-            # estimate
-            self.x, _ = self.estimate(x_P_update, P_w)
             # resampling
             x_P, P_w = self.simple_resample(x_P_update, P_w)
+            # estimate
+            self.x, _ = self.estimate(x_P_update, P_w)
 
             x_est_out.append(self.x)
 
@@ -172,8 +204,7 @@ class GaussianParticleFilter(object):
 
         self.n = Q.shape[1]
         self.m = R.shape[1]
-        self.particle_num = particle_num
-
+        self.particle_num = 100 if particle_num is None else particle_num
 
         self.f = f
         self.h = h
